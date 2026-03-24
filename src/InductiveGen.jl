@@ -16,26 +16,31 @@ end
 
 
 # This recursively generates random mathematical expression
-@gen function generate_expr(depth::Int)
+@gen function generate_expr(depth::Int, allow_const::Bool=true)
     if depth <= 0
-        node_type = @trace(categorical([0.5, 0.5]), :type)
+        probs = allow_const ? [0.5, 0.5] : [1.0, 0.0]
+        node_type = @trace(categorical(probs), :type)
 
         if node_type == 1
             return Var()
         else
-            val = @trace(uniform_discrete(-10, 10), :val)
+            val = round(@trace(uniform(-100, 100), :val), digits=2)
             return Const(Float64(val))
         end
     else
-        node_type = @trace(categorical([0.23, 0.23, 0.18, 0.18, 0.18]), :type)
+        probs = allow_const ? [0.23, 0.23, 0.18, 0.18, 0.18] : [0.35, 0.0, 0.21, 0.22, 0.22]
+        node_type = @trace(categorical(probs), :type)
         if node_type == 1
             return Var()
         elseif node_type == 2
-            val = @trace(uniform_discrete(1,5), :val)
+            val = round(@trace(uniform(-100, 100), :val), digits=2)
             return Const(Float64(val))
         else
             left = @trace(generate_expr(depth - 1), :left)
-            right = @trace(generate_expr(depth - 1), :right)
+            right_can_be_const = !(left isa Const)
+
+            right = @trace(generate_expr(depth - 1, right_can_be_const), :right)
+
             return make_op(node_type, left, right)
         end
     end
@@ -99,7 +104,7 @@ function synthesize_program(xs::Vector{Float64}, ys::Vector{Float64}, max_depth 
             end
         end
 
-        print("Best program at depth $depth, error $min_error: $best_program")
+        println("Best program at depth $depth, error $min_error: $best_program")
     end
 end
 
