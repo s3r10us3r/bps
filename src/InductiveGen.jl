@@ -16,7 +16,7 @@ end
 
 
 # This recursively generates random mathematical expression
-@gen function generate_expr(depth::Int, allow_const::Bool=true)
+@gen function generate_expr(depth::Int, allow_const::Bool=true, const_range::Tuple{Int, Int}=(-100, 100))
     if depth <= 0
         probs = allow_const ? [0.5, 0.5] : [1.0, 0.0]
         node_type = @trace(categorical(probs), :type)
@@ -24,7 +24,7 @@ end
         if node_type == 1
             return Var()
         else
-            val = round(@trace(uniform(-100, 100), :val), digits=2)
+            val = round(@trace(uniform(const_range[1], const_range[2]), :val), digits=2)
             return Const(Float64(val))
         end
     else
@@ -33,7 +33,7 @@ end
         if node_type == 1
             return Var()
         elseif node_type == 2
-            val = round(@trace(uniform(-100, 100), :val), digits=2)
+            val = round(@trace(uniform(const_range[1], const_range[2]), :val), digits=2)
             return Const(Float64(val))
         else
             left = @trace(generate_expr(depth - 1), :left)
@@ -80,13 +80,24 @@ function synthesize_program(xs::Vector{Float64}, ys::Vector{Float64}, max_depth 
     end
     observations[:size_penalty] = 1.0
 
+    best_program = nothing
+    min_error = Inf
+    best_trace = nothing
+
     for depth in 0:max_depth
         println("Searching at depth: $depth")
 
+        if best_trace == nothing
+            trace, _ = generate(program_model, (xs, depth), observations) 
+        else
+            trace, _, _, _ = update(best_trace, (xs, depth), (Gen.NoChange(), Gen.UnknownChange()), choicemap())
+        end
+
         trace, _ = generate(program_model, (xs, depth), observations) 
 
-        min_error = Inf
-        best_program = Nothing
+        local_min_error = Inf
+        local_best_program = nothing
+
         for step in 1:steps_per_depth
             current_program = get_retval(trace)
             valid_paths = Ast.get_all_paths(current_program)
@@ -98,14 +109,22 @@ function synthesize_program(xs::Vector{Float64}, ys::Vector{Float64}, max_depth 
             current_program = get_retval(trace)
             total_error = sum(abs(Ast.evaluate(current_program, xs[i]) - ys[i]) for i in 1:length(xs))
 
-            if total_error < min_error
-                min_error = total_error
-                best_program = current_program
+            if total_error < local_min_error
+                local_min_error = total_error
+                local_best_program = current_program
+                best_trace = trace
             end
         end
 
-        println("Best program at depth $depth, error $min_error: $best_program")
+        println("Best program at depth $depth, error $local_min_error: $local_best_program")
+        if local_min_error < min_error
+            min_error = local_min_error
+            best_program = local_best_program
+        end
     end
+    println("Best program found:")
+    println("$best_program")
+    println("Error: $min_error")
 end
 
 end # module InductiveGen
