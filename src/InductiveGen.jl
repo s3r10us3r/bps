@@ -2,7 +2,12 @@ module InductiveGen
 
 include("Ast.jl")
 using Gen
-using .Ast: evaluate, get_all_paths, Expr, Plus, Mult, Div, Var, Const
+using .Ast: evaluate, get_all_paths, Expr, Plus, Mult, Div, Var, Const, If
+
+@gen function generate_const(const_range::Tuple{Int, Int})
+    val = round(@trace(uniform(const_range[1], const_range[2]), :val), digits=2)
+    return Const(Float64(val))
+end
 
 function make_op(code::Int, left, right) 
     if code == 3
@@ -16,7 +21,7 @@ end
 
 
 # This recursively generates random mathematical expression
-@gen function generate_expr(depth::Int, allow_const::Bool=true, const_range::Tuple{Int, Int}=(-100, 100))
+@gen function generate_expr(depth::Int, allow_const::Bool=true, allow_if::Bool=true, const_range::Tuple{Int, Int}=(-100, 100))
     if depth <= 0
         probs = allow_const ? [0.5, 0.5] : [1.0, 0.0]
         node_type = @trace(categorical(probs), :type)
@@ -27,22 +32,34 @@ end
             val = round(@trace(uniform(const_range[1], const_range[2]), :val), digits=2)
             return Const(Float64(val))
         end
-    else
-        probs = allow_const ? [0.23, 0.23, 0.18, 0.18, 0.18] : [0.35, 0.0, 0.21, 0.22, 0.22]
-        node_type = @trace(categorical(probs), :type)
-        if node_type == 1
-            return Var()
-        elseif node_type == 2
-            val = round(@trace(uniform(const_range[1], const_range[2]), :val), digits=2)
-            return Const(Float64(val))
-        else
-            left = @trace(generate_expr(depth - 1), :left)
-            right_can_be_const = !(left isa Const)
+    end
 
-            right = @trace(generate_expr(depth - 1, right_can_be_const), :right)
+    if allow_if
+        is_if = @trace(bernoulli(0.25), :is_if)
 
-            return make_op(node_type, left, right)
+        if is_if
+            cond = @trace(generate_const(const_range), :cond)
+            true_branch = @trace(generate_expr(depth - 1, true, true, const_range), :true_branch)
+            false_branch = @trace(generate_expr(depth - 1, true, true, const_range), :false_branch)
+            return If(cond, true_branch, false_branch)
         end
+    end
+
+
+    probs = allow_const ? [0.23, 0.23, 0.18, 0.18, 0.18] : [0.35, 0.0, 0.21, 0.22, 0.22]
+    node_type = @trace(categorical(probs), :type)
+    if node_type == 1
+        return Var()
+    elseif node_type == 2
+        val = round(@trace(uniform(const_range[1], const_range[2]), :val), digits=2)
+        return Const(Float64(val))
+    else
+        left = @trace(generate_expr(depth - 1, true, false, const_range), :left)
+        right_can_be_const = !(left isa Const)
+
+        right = @trace(generate_expr(depth - 1, right_can_be_const, false, const_range), :right)
+
+        return make_op(node_type, left, right)
     end
 end
 
@@ -64,10 +81,10 @@ end
     expr = @trace(generate_expr(max_depth), :expr)
     for (i, x) in enumerate(xs)
         y_pred = evaluate(expr, x)
-        @trace(normal(y_pred, 0.01), (:y, i))
+        @trace(normal(y_pred, 0.1), (:y, i))
     end
     size = Ast.tree_size(expr)
-    @trace(normal(size, 3.0), :size_penalty)
+    @trace(normal(size, 10.0), :size_penalty)
     expr
 end
 
@@ -92,8 +109,6 @@ function synthesize_program(xs::Vector{Float64}, ys::Vector{Float64}, max_depth 
         else
             trace, _, _, _ = update(best_trace, (xs, depth), (Gen.NoChange(), Gen.UnknownChange()), choicemap())
         end
-
-        trace, _ = generate(program_model, (xs, depth), observations) 
 
         local_min_error = Inf
         local_best_program = nothing
