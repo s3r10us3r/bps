@@ -35,7 +35,7 @@ end
     end
 
     if allow_if
-        is_if = @trace(bernoulli(0.25), :is_if)
+        is_if = @trace(bernoulli(0.1), :is_if)
 
         if is_if
             cond = @trace(generate_const(const_range), :cond)
